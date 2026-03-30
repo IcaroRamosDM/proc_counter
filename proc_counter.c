@@ -11,8 +11,8 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Icaro");
-MODULE_DESCRIPTION("Kernel module with /proc interface");
-MODULE_VERSION("0.5");
+MODULE_DESCRIPTION("Kernel module with /proc R/W interface");
+MODULE_VERSION("0.6");
 
 // Ponteiro para a entrada criada em /proc
 static struct proc_dir_entry *proc_entry;
@@ -90,6 +90,7 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
 {
     char buffer[BUFFER_SIZE];
     int value;
+    ssize_t ret = count;
 
     // Evita overflow
     if (count >= BUFFER_SIZE)
@@ -117,11 +118,8 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
         read_count = 0;
         write_count = 0;
         stored_value = 0;
-
-        mutex_unlock(&proc_counter_mutex);
-
         pr_info("proc_counter: reset command received\n");
-        return count;
+        goto out_unlock;
     }
     
     /*
@@ -129,20 +127,19 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
      */
     if (kstrtoint(buffer, 10, &value) == 0) {
         stored_value = value;
-        
-        mutex_unlock(&proc_counter_mutex);
-
         pr_info("proc_counter: stored value updated to %d\n", stored_value);
-        return count;
+        goto out_unlock;
     }
-
-    mutex_unlock(&proc_counter_mutex);
 
     /*
      * Se a entrada não for reset nem inteiro
      */
     pr_err("proc_counter: invalid input: \"%s\"\n", buffer);
-    return -EINVAL;
+    ret = -EINVAL;
+
+out_unlock:
+    mutex_unlock(&proc_counter_mutex);
+    return ret;
 }
 
 /*
