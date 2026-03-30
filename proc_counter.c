@@ -4,6 +4,7 @@
 #include <linux/proc_fs.h>      // API de /proc
 #include <linux/uaccess.h>      // copy_to_user(), copy_from_user()
 #include <linux/string.h>       // strcmp(), strncmp(), strcspn()
+#include <linux/mutex.h>        // mutex, mutex_lock, mutex_unlock
 
 #define PROC_NAME "proc_counter"    // Nome do arquivo em /proc
 #define BUFFER_SIZE 128             // Tamanho máximo de entrada do usuário
@@ -11,15 +12,22 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Icaro");
 MODULE_DESCRIPTION("Kernel module with /proc interface");
-MODULE_VERSION("0.4");
+MODULE_VERSION("0.5");
 
 // Ponteiro para a entrada criada em /proc
 static struct proc_dir_entry *proc_entry;
 
-// Variáveis internas do módulo (estado)
+/*
+ * Estado interno do módulo.
+ * Essas variáveis são compartlhadas entre diferentes acessos ao arquivo
+ * em /proc, então pode-se protegê-las com uma mutex.
+ */
 static int read_count = 0;
 static int write_count = 0;
 static int stored_value = 0;
+
+/* Mutex usada para proteger o estado interno do módulo */
+static DEFINE_MUTEX(proc_counter_mutex);
 
 /*
  * Função chamada quando o usuário faz:
@@ -30,20 +38,38 @@ static ssize_t proc_read(struct file *file, char __user *user_buffer,
 {
     char buffer[128];
     int len;
+    int local_read_count;
+    int local_write_count;
+    int local_stored_value;
 
     // Evita leitura infinita
     if (*offset > 0)
         return 0;
 
+    /*
+     * Região crítica para atualizar e ler o estado de forma segura.
+     */
+    mutex_lock(&proc_counter_mutex);
+
     // Incrementa contador de leitura
     read_count++;
+
+    /*
+     * Copia os valores para as variáveis locais enquanto a mutex está travada.
+     * Assim mantém-se consistência na saída.
+     */
+    local_read_count = read_count;
+    local_write_count = write_count;
+    local_stored_value = stored_value;
+
+    mutex_unlock(&proc_counter_mutex);
 
     // Monta a mensagem que será enviada ao user space
     len = snprintf(buffer, sizeof(buffer),
                   "Read count: %d\n"
                   "Write count: %d\n"
                   "Stored value: %d\n",
-                  read_count, write_count, stored_value);
+                  local_read_count, local_write_count, local_stored_value);
 
     // Copia dados do kernel para o usuário
     if (copy_to_user(user_buffer, buffer, len))
@@ -66,7 +92,7 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
     int value;
 
     // Evita overflow
-    if (count > BUFFER_SIZE -1)
+    if (count >= BUFFER_SIZE)
         return -EINVAL;
 
     // Copia dados do usuário para o kernel
@@ -76,6 +102,8 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
     buffer[count] = '\0'; // Garante string terminada
 
     buffer[strcspn(buffer, "\n")] = '\0'; // Remove \n que vem do comando de echo
+
+    mutex_lock(&proc_counter_mutex);
 
     // Incrementa contador de escrita
     write_count++;
@@ -89,6 +117,9 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
         read_count = 0;
         write_count = 0;
         stored_value = 0;
+
+        mutex_unlock(&proc_counter_mutex);
+
         pr_info("proc_counter: reset command received\n");
         return count;
     }
@@ -98,9 +129,14 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
      */
     if (kstrtoint(buffer, 10, &value) == 0) {
         stored_value = value;
+        
+        mutex_unlock(&proc_counter_mutex);
+
         pr_info("proc_counter: stored value updated to %d\n", stored_value);
         return count;
     }
+
+    mutex_unlock(&proc_counter_mutex);
 
     /*
      * Se a entrada não for reset nem inteiro
@@ -122,15 +158,13 @@ static const struct proc_ops proc_file_ops = {
  */
 static int __init proc_counter_init(void)
 {
-    pr_info("proc_counter: module loaded\n");
-
     /*
      * Cria o arquivo /proc/proc_counter
      */
     proc_entry = proc_create(PROC_NAME, 0666, NULL, &proc_file_ops);
 
     if (!proc_entry) {
-        pr_err("proc_counter: failed to create /proc entry\n");
+        pr_err("proc_counter: failed to create /proc/%s\n", PROC_NAME);
         return -ENOMEM;
     }
 
