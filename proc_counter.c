@@ -1,13 +1,13 @@
-#include <linux/init.h>         // Macros __init e __exit
+#include <linux/init.h>         // Macros __init and __exit
 #include <linux/kernel.h>       // pr_info(), pr_err()
-#include <linux/module.h>       // Infraestrutura de módulos do kernel
-#include <linux/proc_fs.h>      // API de /proc
+#include <linux/module.h>       // Kernel module infrastructure
+#include <linux/proc_fs.h>      // /proc API
 #include <linux/uaccess.h>      // copy_to_user(), copy_from_user()
 #include <linux/string.h>       // strcmp(), strncmp(), strcspn()
 #include <linux/mutex.h>        // mutex, mutex_lock, mutex_unlock
 
-#define PROC_NAME "proc_counter"    // Nome do arquivo em /proc
-#define BUFFER_SIZE 128             // Tamanho máximo de entrada do usuário
+#define PROC_NAME "proc_counter"    // Name of the file in /proc
+#define BUFFER_SIZE 128             // Maximum size of user input
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Icaro");
@@ -18,19 +18,19 @@ MODULE_VERSION("0.6");
 static struct proc_dir_entry *proc_entry;
 
 /*
- * Estado interno do módulo.
- * Essas variáveis são compartlhadas entre diferentes acessos ao arquivo
- * em /proc, então pode-se protegê-las com uma mutex.
+ * Internal state of the module.
+ * These variables are shared across different accesses to the /proc file
+ * so they must be protected with a mutex
  */
 static int read_count = 0;
 static int write_count = 0;
 static int stored_value = 0;
 
-/* Mutex usada para proteger o estado interno do módulo */
+/* Mutex used to protect the module's internal state */
 static DEFINE_MUTEX(proc_counter_mutex);
 
 /*
- * Função chamada quando o usuário faz:
+ * Function called when the user runs:
  * cat /proc/proc_counter
  */
 static ssize_t proc_read(struct file *file, char __user *user_buffer,
@@ -42,21 +42,20 @@ static ssize_t proc_read(struct file *file, char __user *user_buffer,
     int local_write_count;
     int local_stored_value;
 
-    // Evita leitura infinita
+    // Prevent infinite reads
     if (*offset > 0)
         return 0;
 
     /*
-     * Região crítica para atualizar e ler o estado de forma segura.
+     * Critical section to safely update and read the state.
      */
     mutex_lock(&proc_counter_mutex);
 
-    // Incrementa contador de leitura
     read_count++;
 
     /*
-     * Copia os valores para as variáveis locais enquanto a mutex está travada.
-     * Assim mantém-se consistência na saída.
+     * Copy values into local variables while holding the mutex.
+     * This ensures a conssitent snapshot of the state.
      */
     local_read_count = read_count;
     local_write_count = write_count;
@@ -64,25 +63,25 @@ static ssize_t proc_read(struct file *file, char __user *user_buffer,
 
     mutex_unlock(&proc_counter_mutex);
 
-    // Monta a mensagem que será enviada ao user space
+    // Build the message to send to user space
     len = snprintf(buffer, sizeof(buffer),
                   "Read count: %d\n"
                   "Write count: %d\n"
                   "Stored value: %d\n",
                   local_read_count, local_write_count, local_stored_value);
 
-    // Copia dados do kernel para o usuário
+    // Copy data from kernel space to user space
     if (copy_to_user(user_buffer, buffer, len))
         return -EFAULT;
 
-    *offset = len; // Atualiza offset para indicar que já leu
+    *offset = len; // Update offset to indicate data has been read
 
-    return len; // Retorna quantos bytes foram lidos
+    return len; // Return number of bytes read
 }
 
 /*
- * Função chamada ao escrever em /proc/proc_counter
- * Exemplo:
+ * Function called when writing to /proc/proc_counter
+ * Example:
  * echo reset > /proc/proc_counter
  */
 static ssize_t proc_write(struct file *file, const char __user *user_buffer,
@@ -92,28 +91,27 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
     int value;
     ssize_t ret = count;
 
-    // Evita overflow
+    // Prevent overflow
     if (count >= BUFFER_SIZE)
         return -EINVAL;
 
-    // Copia dados do usuário para o kernel
+    // Copy data from user space to kernel space
     if (copy_from_user(buffer, user_buffer, count))
         return -EFAULT;
 
-    buffer[count] = '\0'; // Garante string terminada
+    buffer[count] = '\0'; // Ensure null-terminated string
 
-    buffer[strcspn(buffer, "\n")] = '\0'; // Remove \n que vem do comando de echo
+    buffer[strcspn(buffer, "\n")] = '\0'; // Remove newline from echo input
 
     mutex_lock(&proc_counter_mutex);
 
-    // Incrementa contador de escrita
     write_count++;
 
     /*
-     * Verifica comandos
+     * Check commands
      */
 
-    // Caso: reset
+    // Case: reset
     if (strcmp(buffer, "reset") == 0) {
         read_count = 0;
         write_count = 0;
@@ -123,7 +121,7 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
     }
     
     /*
-     * Se não for "reset", tenta interpretar o conteúdo como inteiro.
+     * If not "reset", try to parse input as integer.
      */
     if (kstrtoint(buffer, 10, &value) == 0) {
         stored_value = value;
@@ -132,7 +130,7 @@ static ssize_t proc_write(struct file *file, const char __user *user_buffer,
     }
 
     /*
-     * Se a entrada não for reset nem inteiro
+     * If input is neither reset nor a valid integer
      */
     pr_err("proc_counter: invalid input: \"%s\"\n", buffer);
     ret = -EINVAL;
@@ -143,20 +141,20 @@ out_unlock:
 }
 
 /*
- * Estrutura com as operações do arquivo em /proc
+ * Structure defining operations for the /proc file
  */
 static const struct proc_ops proc_file_ops = {
-    .proc_read = proc_read, // Associa a função de leitura
-    .proc_write = proc_write, // Associa a função de escrita
+    .proc_read = proc_read, // Associate read handler
+    .proc_write = proc_write, // Associate write handler
 };
 
 /*
- * Inicialização do módulo
+ * Module initialization
  */
 static int __init proc_counter_init(void)
 {
     /*
-     * Cria o arquivo /proc/proc_counter
+     * Create /proc/proc_counter file
      */
     proc_entry = proc_create(PROC_NAME, 0666, NULL, &proc_file_ops);
 
@@ -170,12 +168,12 @@ static int __init proc_counter_init(void)
 }
 
 /*
- * Finalização do módulo
+ * Module cleanup
  */
 static void __exit proc_counter_exit(void)
 {
     /*
-     * Remove o arquivo de /proc
+     * Remove /proc entry
      */
     proc_remove(proc_entry);
     pr_info("proc_counter: module unloaded\n");
