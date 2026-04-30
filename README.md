@@ -2,6 +2,8 @@
 
 Linux Kernel Module that exposes a '/proc' interface for interaction between kernel space and user space.
 
+---
+
 ## Description
 
 This module creates a '/proc/proc_counter' entry that allows:
@@ -38,6 +40,8 @@ Make sure you have the required kernel headers installed.
 make
 ```
 
+---
+
 ## Load and Unload Module
 
 ### Load module
@@ -54,6 +58,8 @@ lsmod | grep proc_counter
 ```bash
 sudo rmmod proc_counter
 ```
+
+---
 
 ## Usage
 
@@ -85,14 +91,30 @@ echo abc | sudo tee /proc/proc_counter
 ```
 This will return an error and log a message in dmesg
 
+---
+
 ## Kernel Logs
 ```bash
 sudo dmesg | tail
 ```
 
+---
+
 ## Notes
 
 - This module is for educational purposes
 
-# Author
-Ícaro Ramos R. dos Santos
+---
+
+## License
+
+MIT
+
+---
+
+## Author
+Icaro Ramos Rodrigues dos Santos<br>
+Embedded Systems | Firmware | ARM | STM32 | C | Verilog | UVM | Design Verification<br><br>
+GitHub: https://github.com/IcaroRamosDM<br>
+LinkedIn: https://www.linkedin.com/in/icaro-ramos-r/<br>
+icaroelt@gmail.com
