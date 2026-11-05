@@ -1,184 +1,115 @@
-#include <linux/init.h>         // Macros __init and __exit
-#include <linux/kernel.h>       // pr_info(), pr_err()
-#include <linux/module.h>       // Kernel module infrastructure
-#include <linux/proc_fs.h>      // /proc API
-#include <linux/uaccess.h>      // copy_to_user(), copy_from_user()
-#include <linux/string.h>       // strcmp(), strncmp(), strcspn()
-#include <linux/mutex.h>        // mutex, mutex_lock, mutex_unlock
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include <linux/string.h>
+#include <linux/uaccess.h>
 
-#define PROC_NAME "proc_counter"    // Name of the file in /proc
-#define BUFFER_SIZE 128             // Maximum size of user input
+#define PROC_NAME "proc_counter"
+#define INPUT_CAPACITY 128U
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Icaro");
-MODULE_DESCRIPTION("Kernel module with /proc R/W interface");
-MODULE_VERSION("0.6");
+MODULE_AUTHOR("Icaro Ramos Rodrigues dos Santos");
+MODULE_DESCRIPTION("Educational /proc interface with synchronized counters");
+MODULE_VERSION("0.7");
 
-// Ponteiro para a entrada criada em /proc
 static struct proc_dir_entry *proc_entry;
+static unsigned long long read_count;
+static unsigned long long write_count;
+static int stored_value;
+static DEFINE_MUTEX(counter_mutex);
 
-/*
- * Internal state of the module.
- * These variables are shared across different accesses to the /proc file
- * so they must be protected with a mutex
- */
-static int read_count = 0;
-static int write_count = 0;
-static int stored_value = 0;
-
-/* Mutex used to protect the module's internal state */
-static DEFINE_MUTEX(proc_counter_mutex);
-
-/*
- * Function called when the user runs:
- * cat /proc/proc_counter
- */
-static ssize_t proc_read(struct file *file, char __user *user_buffer,
-                        size_t count, loff_t *offset)
-{
-    char buffer[128];
-    int len;
-    int local_read_count;
-    int local_write_count;
-    int local_stored_value;
-
-    // Prevent infinite reads
-    if (*offset > 0)
-        return 0;
-
-    /*
-     * Critical section to safely update and read the state.
-     */
-    mutex_lock(&proc_counter_mutex);
-
-    read_count++;
-
-    /*
-     * Copy values into local variables while holding the mutex.
-     * This ensures a conssitent snapshot of the state.
-     */
-    local_read_count = read_count;
-    local_write_count = write_count;
-    local_stored_value = stored_value;
-
-    mutex_unlock(&proc_counter_mutex);
-
-    // Build the message to send to user space
-    len = snprintf(buffer, sizeof(buffer),
-                  "Read count: %d\n"
-                  "Write count: %d\n"
-                  "Stored value: %d\n",
-                  local_read_count, local_write_count, local_stored_value);
-
-    // Copy data from kernel space to user space
-    if (copy_to_user(user_buffer, buffer, len))
-        return -EFAULT;
-
-    *offset = len; // Update offset to indicate data has been read
-
-    return len; // Return number of bytes read
-}
-
-/*
- * Function called when writing to /proc/proc_counter
- * Example:
- * echo reset > /proc/proc_counter
- */
-static ssize_t proc_write(struct file *file, const char __user *user_buffer,
-                          size_t count, loff_t *offset)
-{
-    char buffer[BUFFER_SIZE];
+static int counter_show(struct seq_file *output, void *unused) {
+    unsigned long long reads;
+    unsigned long long writes;
     int value;
-    ssize_t ret = count;
 
-    // Prevent overflow
-    if (count >= BUFFER_SIZE)
-        return -EINVAL;
+    (void)unused;
+    mutex_lock(&counter_mutex);
+    read_count++;
+    reads = read_count;
+    writes = write_count;
+    value = stored_value;
+    mutex_unlock(&counter_mutex);
 
-    // Copy data from user space to kernel space
-    if (copy_from_user(buffer, user_buffer, count))
-        return -EFAULT;
-
-    buffer[count] = '\0'; // Ensure null-terminated string
-
-    buffer[strcspn(buffer, "\n")] = '\0'; // Remove newline from echo input
-
-    mutex_lock(&proc_counter_mutex);
-
-    write_count++;
-
-    /*
-     * Check commands
-     */
-
-    // Case: reset
-    if (strcmp(buffer, "reset") == 0) {
-        read_count = 0;
-        write_count = 0;
-        stored_value = 0;
-        pr_info("proc_counter: reset command received\n");
-        goto out_unlock;
-    }
-    
-    /*
-     * If not "reset", try to parse input as integer.
-     */
-    if (kstrtoint(buffer, 10, &value) == 0) {
-        stored_value = value;
-        pr_info("proc_counter: stored value updated to %d\n", stored_value);
-        goto out_unlock;
-    }
-
-    /*
-     * If input is neither reset nor a valid integer
-     */
-    pr_err("proc_counter: invalid input: \"%s\"\n", buffer);
-    ret = -EINVAL;
-
-out_unlock:
-    mutex_unlock(&proc_counter_mutex);
-    return ret;
-}
-
-/*
- * Structure defining operations for the /proc file
- */
-static const struct proc_ops proc_file_ops = {
-    .proc_read = proc_read, // Associate read handler
-    .proc_write = proc_write, // Associate write handler
-};
-
-/*
- * Module initialization
- */
-static int __init proc_counter_init(void)
-{
-    /*
-     * Create /proc/proc_counter file
-     */
-    proc_entry = proc_create(PROC_NAME, 0666, NULL, &proc_file_ops);
-
-    if (!proc_entry) {
-        pr_err("proc_counter: failed to create /proc/%s\n", PROC_NAME);
-        return -ENOMEM;
-    }
-
-    pr_info("proc_counter: module loaded\n");
+    /* seq_file handles the caller's size and offset for partial reads. */
+    seq_printf(output, "Read count: %llu\nWrite count: %llu\nStored value: %d\n", reads, writes,
+               value);
     return 0;
 }
 
-/*
- * Module cleanup
- */
-static void __exit proc_counter_exit(void)
-{
-    /*
-     * Remove /proc entry
-     */
-    proc_remove(proc_entry);
-    pr_info("proc_counter: module unloaded\n");
+static int counter_open(struct inode *inode, struct file *file) {
+    (void)inode;
+    return single_open(file, counter_show, NULL);
 }
 
-module_init(proc_counter_init);
-module_exit(proc_counter_exit);
+static ssize_t counter_write(struct file *file, const char __user *user_buffer, size_t count,
+                             loff_t *offset) {
+    char buffer[INPUT_CAPACITY];
+    char *command;
+    int value = 0;
+    bool reset;
 
+    (void)file;
+    (void)offset;
+    if (count == 0) {
+        return 0;
+    }
+    if (count >= sizeof buffer) {
+        return -EINVAL;
+    }
+    if (copy_from_user(buffer, user_buffer, count)) {
+        return -EFAULT;
+    }
+    /* Embedded NUL bytes must not hide an unparsed suffix. */
+    if (memchr(buffer, '\0', count)) {
+        return -EINVAL;
+    }
+    buffer[count] = '\0';
+    command = strim(buffer);
+    reset = strcmp(command, "reset") == 0;
+    if (!reset && kstrtoint(command, 10, &value) != 0) {
+        return -EINVAL;
+    }
+
+    if (mutex_lock_interruptible(&counter_mutex)) {
+        return -ERESTARTSYS;
+    }
+    if (reset) {
+        read_count = 0;
+        write_count = 0;
+        stored_value = 0;
+    } else {
+        write_count++;
+        stored_value = value;
+    }
+    mutex_unlock(&counter_mutex);
+    return (ssize_t)count;
+}
+
+static const struct proc_ops counter_operations = {
+    .proc_open = counter_open,
+    .proc_read = seq_read,
+    .proc_lseek = seq_lseek,
+    .proc_release = single_release,
+    .proc_write = counter_write,
+};
+
+static int __init counter_init(void) {
+    proc_entry = proc_create(PROC_NAME, 0644, NULL, &counter_operations);
+    if (proc_entry == NULL) {
+        return -ENOMEM;
+    }
+    pr_info("proc_counter: created /proc/%s\n", PROC_NAME);
+    return 0;
+}
+
+static void __exit counter_exit(void) {
+    proc_remove(proc_entry);
+    pr_info("proc_counter: removed /proc/%s\n", PROC_NAME);
+}
+
+module_init(counter_init);
+module_exit(counter_exit);
