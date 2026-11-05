@@ -15,3 +15,8 @@ modules.order
 # Editor
 *~
 
+
+# Kernel command and dependency files
+.*.cmd
+.tmp_versions/
+__pycache__/

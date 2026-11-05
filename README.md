@@ -1,120 +1,60 @@
-# Kernel Module: proc_counter
+# Linux /proc Counter
 
-Linux Kernel Module that exposes a '/proc' interface for interaction between kernel space and user space.
+[![Checks](https://github.com/IcaroRamosDM/proc_counter/actions/workflows/checks.yml/badge.svg)](https://github.com/IcaroRamosDM/proc_counter/actions/workflows/checks.yml)
 
----
+An educational kernel module exposing an integer and synchronized counters at
+/proc/proc_counter. The canonical implementation is proc_counter.c;
+[the Portuguese guide](docs/COMO_FUNCIONA.md) explains the code.
 
-## Description
+## Interface
 
-This module creates a '/proc/proc_counter' entry that allows:
+- Read a snapshot containing Read count, Write count and Stored value.
+- Write a decimal signed int to update the value and count an accepted write.
+- Write reset to clear the state.
+- Empty writes preserve the state; invalid commands, embedded NUL bytes,
+  out-of-range integers and inputs of 128 bytes or more return EINVAL.
 
-- Reading internal state from the kernel
-- Writing commands to modify behavior
-- Tracking R/W operations
-- Storing a user-defined integer value
+seq_file handles partial reads, offsets and EOF. Read count measures rendered
+snapshots rather than every read syscall. A mutex protects the shared state.
+Permissions are 0644: readers can inspect it and the owner can write.
 
-It demonstrates a simple communication mechanism between user space and kernel space using the '/proc' filesystem.
+## Build and use
 
----
-
-## Features
-
-- '/proc' file creation
-- Read handler ('cat')
-- Write handler ('echo')
-- Internal state trancking:
-  - Read count
-  - Write count
-  - Stored value
-- Command parsing:
-  - 'reset' -> resets all values
-  - integer input -> updates stored value
-- Mutex-based synchronization
-
----
-
-## Build Instructions
-
-Make sure you have the required kernel headers installed.
-```bash
+~~~sh
 make
-```
-
----
-
-## Load and Unload Module
-
-### Load module
-```bash
 sudo insmod proc_counter.ko
-```
-
-### Check if loaded
-```bash
-lsmod | grep proc_counter
-```
-
-### Unload module
-```bash
-sudo rmmod proc_counter
-```
-
----
-
-## Usage
-
-### Read data
-```bash
 cat /proc/proc_counter
-```
+printf '42\n' | sudo tee /proc/proc_counter
+printf 'reset\n' | sudo tee /proc/proc_counter
+sudo rmmod proc_counter
+~~~
 
-### Example output:
-```bash
-Read count: 1
-Write count: 0
-Stored value: 0
-```
+KDIR selects another kernel-header tree. Use headers matching the target kernel
+and its module-loading policy. make compiles but does not load the module.
 
-### Write a value
-```bash
-echo [integer_value] | sudo tee /proc/proc_counter
-```
+## Integration checks
 
-### Reset state
-```bash
-sudo reset | sudo tee /proc/proc_counter
-```
+With the module already loaded in a development system or VM:
 
-### Invalid input
-```bash
-echo abc | sudo tee /proc/proc_counter
-```
-This will return an error and log a message in dmesg
+~~~sh
+sudo python3 tests/check_counter.py
+~~~
 
----
-
-## Kernel Logs
-```bash
-sudo dmesg | tail
-```
-
----
-
-## Notes
-
-- This module is for educational purposes
-
----
+The script changes the demo state and checks one-byte reads, EOF, signed integer
+limits, empty writes and malformed commands. It does not load a module.
+CI compilation and a live-kernel integration run are separate checks.
 
 ## License
 
-MIT
-
----
+[MIT](LICENSE).
 
 ## Author
-Icaro Ramos Rodrigues dos Santos<br>
-Embedded Systems | Firmware | ARM | STM32 | C | Verilog | UVM | Design Verification<br><br>
-GitHub: https://github.com/IcaroRamosDM<br>
-LinkedIn: https://www.linkedin.com/in/icaro-ramos-r/<br>
-icaroelt@gmail.com
+
+**Icaro Ramos Rodrigues dos Santos**<br>
+Electronic Engineer
+
+Embedded Systems | Firmware | C | C++ | Python | Dart | Assembly | Hardware Design | PCB Design | STM32 | ARM Cortex-M | Linux | Windows | RISC-V | Verilog | SystemVerilog | UVM | Design Verification | Instrumentation | Signal Processing | Qt | FLTK
+
+GitHub: [IcaroRamosDM](https://github.com/IcaroRamosDM)<br>
+LinkedIn: [icaro-ramos-r](https://www.linkedin.com/in/icaro-ramos-r/)<br>
+[icaroelt@gmail.com](mailto:icaroelt@gmail.com)
